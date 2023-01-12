@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/containerd/accelerated-container-image/pkg/snapshot"
 	"github.com/containerd/containerd/archive/compression"
@@ -73,7 +74,7 @@ func prepareWritableLayer(ctx context.Context, dir string) error {
 	indexPath := path.Join(dir, "writable_index")
 	os.RemoveAll(dataPath)
 	os.RemoveAll(indexPath)
-	out, err := exec.CommandContext(ctx, binpath,
+	out, err := exec.CommandContext(ctx, binpath, "-s",
 		dataPath, indexPath, "64").CombinedOutput()
 	if err != nil {
 		return errors.Wrapf(err, "failed to prepare writable layer: %s", out)
@@ -94,7 +95,16 @@ func writeConfig(dir string, configJSON *snapshot.OverlayBDBSConfig) error {
 	return nil
 }
 
+func timeCost() func(string) {
+	start := time.Now()
+	return func(name string) {
+		tc:=time.Since(start)
+		fmt.Printf("%s time cost = %v\n", name, tc)
+	}
+}
+
 func overlaybdApply(ctx context.Context, dir string) error {
+	defer timeCost()("overlaybdApply")
 	binpath := filepath.Join("/opt/overlaybd/bin", "overlaybd-apply")
 
 	out, err := exec.CommandContext(ctx, binpath,
@@ -107,6 +117,7 @@ func overlaybdApply(ctx context.Context, dir string) error {
 }
 
 func overlaybdCommit(ctx context.Context, dir string) error {
+	defer timeCost()("overlaybdCommit")
 	binpath := filepath.Join("/opt/overlaybd/bin", "overlaybd-commit")
 
 	out, err := exec.CommandContext(ctx, binpath, "-z",
@@ -145,6 +156,7 @@ func makeDesc(dir string) (specs.Descriptor, error) {
 }
 
 func uploadBlob(ctx context.Context, pusher remotes.Pusher, path string, desc specs.Descriptor) error {
+	defer timeCost()("uploadBlob")
 	cw, err := pusher.Push(ctx, desc)
 	if err != nil {
 		if errdefs.IsAlreadyExists(err) {
@@ -188,7 +200,7 @@ func convert() error {
 	ctx := context.Background()
 	defer func() {
 		// clean temp data
-		os.RemoveAll(dir)
+		// os.RemoveAll(dir)
 	}()
 
 	resolver := docker.NewResolver(docker.ResolverOptions{
@@ -351,9 +363,9 @@ func convert() error {
 		config.RootFS.DiffIDs[idx] = desc.Digest
 
 		// clean unused file
-		os.Remove(path.Join(dir, lastDigest, "layer.tar"))
-		os.Remove(path.Join(dir, lastDigest, "writable_data"))
-		os.Remove(path.Join(dir, lastDigest, "writable_index"))
+		// os.Remove(path.Join(dir, lastDigest, "layer.tar"))
+		// os.Remove(path.Join(dir, lastDigest, "writable_data"))
+		// os.Remove(path.Join(dir, lastDigest, "writable_index"))
 	}
 
 	// add baselayer
