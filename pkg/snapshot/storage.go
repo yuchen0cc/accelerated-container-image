@@ -637,9 +637,15 @@ func (o *snapshotter) prepareWritableOverlaybd(ctx context.Context, snID string)
 	binpath := filepath.Join(o.config.OverlayBDUtilBinDir, "overlaybd-create")
 
 	// TODO(fuweid): 256GB can be configurable?
-	out, err := exec.CommandContext(ctx, binpath,
+	args := []string{
 		o.overlaybdWritableDataPath(snID),
-		o.overlaybdWritableIndexPath(snID), "64").CombinedOutput()
+		o.overlaybdWritableIndexPath(snID),
+		"64",
+	}
+	if o.writableLayerType == "sparse" {
+		args = append(args, "-s")
+	}
+	out, err := exec.CommandContext(ctx, binpath, args...).CombinedOutput()
 	if err != nil {
 		err := errors.Wrapf(err, "failed to prepare writable overlaybd: %s", out)
 		log.G(ctx).Errorln(err)
@@ -649,13 +655,21 @@ func (o *snapshotter) prepareWritableOverlaybd(ctx context.Context, snID string)
 }
 
 // commitWritableOverlaybd
-func (o *snapshotter) commitWritableOverlaybd(ctx context.Context, snID string) (retErr error) {
+func (o *snapshotter) commitWritableOverlaybd(ctx context.Context, snID string, cfg ZFileConfig) (retErr error) {
 	binpath := filepath.Join(o.config.OverlayBDUtilBinDir, "overlaybd-commit")
-
-	out, err := exec.CommandContext(ctx, binpath, "-z",
+	opts := []string{
+		"-z",
 		o.overlaybdWritableDataPath(snID),
 		o.overlaybdWritableIndexPath(snID),
-		o.magicFilePath(snID)).CombinedOutput()
+		o.magicFilePath(snID),
+	}
+	if cfg.BlockSize != 0 {
+		opts = append(opts, "--bs", strconv.Itoa(cfg.BlockSize))
+	}
+	if cfg.Algorithm != "" {
+		opts = append(opts, "--algorithm", cfg.Algorithm)
+	}
+	out, err := exec.CommandContext(ctx, binpath, opts...).CombinedOutput()
 	if err != nil {
 		return errors.Wrapf(err, "failed to commit writable overlaybd: %s", out)
 	}
