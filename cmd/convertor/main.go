@@ -320,7 +320,17 @@ func convert() error {
 	}
 
 	lastDigest := ""
+	chainStr := ""
+	digestFile := path.Join(dir, "digest.csv")
+	var dFile *os.File
+	if dFile, err = os.OpenFile(digestFile, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666); err != nil {
+		return err
+	}
+	defer dFile.Close()
+
 	for idx, layer := range manifest.Layers {
+		chainStr += layer.Digest.String()
+		chainDgst := digest.FromBytes([]byte(chainStr))
 		layerDir := path.Join(dir, fmt.Sprintf("%04d_", idx)+layer.Digest.String())
 		// TODO check diffID
 
@@ -368,6 +378,11 @@ func convert() error {
 		lastDigest = fmt.Sprintf("%04d_", idx) + manifest.Layers[idx].Digest.String()
 		manifest.Layers[idx] = desc
 		config.RootFS.DiffIDs[idx] = desc.Digest
+
+		digestLine := chainDgst.String() + "," + layer.Digest.String() + "," + desc.Digest.String() + "\n"
+		if _, err = io.WriteString(dFile, digestLine); err != nil {
+			logrus.Errorf("write digest file failed")
+		}
 
 		// clean unused file
 		// os.Remove(path.Join(dir, lastDigest, "layer.tar"))
