@@ -98,7 +98,7 @@ func writeConfig(dir string, configJSON *snapshot.OverlayBDBSConfig) error {
 func timeCost() func(string) {
 	start := time.Now()
 	return func(name string) {
-		tc:=time.Since(start)
+		tc := time.Since(start)
 		fmt.Printf("%s time cost = %v\n", name, tc)
 	}
 }
@@ -119,6 +119,8 @@ func overlaybdApply(ctx context.Context, dir string) error {
 func overlaybdCommit(ctx context.Context, dir string) error {
 	defer timeCost()("overlaybdCommit")
 	binpath := filepath.Join("/opt/overlaybd/bin", "overlaybd-commit")
+	commitPath := path.Join(dir, "overlaybd.commit")
+	os.RemoveAll(commitPath)
 
 	out, err := exec.CommandContext(ctx, binpath, "-z",
 		path.Join(dir, "writable_data"),
@@ -225,11 +227,11 @@ func convert() error {
 		return errors.Wrapf(err, "failed to get fetcher for %q", ref)
 	}
 
-	targetRef := repo + ":" + tagOutput
-	pusher, err := resolver.Pusher(ctx, targetRef)
-	if err != nil {
-		return errors.Wrapf(err, "failed to get pusher for %q", targetRef)
-	}
+	// targetRef := repo + ":" + tagOutput
+	// pusher, err := resolver.Pusher(ctx, targetRef)
+	// if err != nil {
+	// 	return errors.Wrapf(err, "failed to get pusher for %q", targetRef)
+	// }
 
 	rc, err := fetcher.Fetch(ctx, desc)
 	if err != nil {
@@ -290,16 +292,21 @@ func convert() error {
 				results <- err
 				return
 			}
-			ftar, err := os.Create(path.Join(layerDir, "layer.tar"))
-			if err != nil {
-				results <- err
-				return
+			tarDir := path.Join(layerDir, "layer.tar")
+			if _, err = os.Stat(tarDir); err != nil {
+				ftar, err := os.Create(tarDir)
+				if err != nil {
+					results <- err
+					return
+				}
+				if _, err = io.Copy(ftar, drc); err != nil {
+					results <- errors.Wrapf(err, "failed to decompress copy for layer %d", idx)
+					return
+				}
+				logrus.Infof("downloaded layer %d, dir %s", idx, layerDir)
+			} else {
+				logrus.Infof("layer %d has been downloaded, dir %s", idx, layerDir)
 			}
-			if _, err = io.Copy(ftar, drc); err != nil {
-				results <- errors.Wrapf(err, "failed to decompress copy for layer %d", idx)
-				return
-			}
-			logrus.Infof("downloaded layer %d, dir %s", idx, layerDir)
 			waitGroup.Done()
 		}(idx, layer)
 	}
@@ -353,10 +360,10 @@ func convert() error {
 		}
 
 		// upload
-		if err = uploadBlob(ctx, pusher, path.Join(layerDir, "overlaybd.commit"), desc); err != nil {
-			return errors.Wrapf(err, "failed to upload layer %d", idx)
-		}
-		logrus.Infof("layer %d uploaded", idx)
+		// if err = uploadBlob(ctx, pusher, path.Join(layerDir, "overlaybd.commit"), desc); err != nil {
+		// 	return errors.Wrapf(err, "failed to upload layer %d", idx)
+		// }
+		// logrus.Infof("layer %d uploaded", idx)
 
 		lastDigest = fmt.Sprintf("%04d_", idx) + manifest.Layers[idx].Digest.String()
 		manifest.Layers[idx] = desc
@@ -378,9 +385,9 @@ func convert() error {
 			"containerd.io/snapshot/overlaybd/blob-size":   "4737695",
 		},
 	}
-	if err = uploadBlob(ctx, pusher, "/opt/overlaybd/baselayers/ext4_64", baseDesc); err != nil {
-		return errors.Wrapf(err, "failed to upload baselayer")
-	}
+	// if err = uploadBlob(ctx, pusher, "/opt/overlaybd/baselayers/ext4_64", baseDesc); err != nil {
+	// 	return errors.Wrapf(err, "failed to upload baselayer")
+	// }
 	manifest.Layers = append([]specs.Descriptor{baseDesc}, manifest.Layers...)
 	config.RootFS.DiffIDs = append([]digest.Digest{baseDesc.Digest}, config.RootFS.DiffIDs...)
 
@@ -394,22 +401,30 @@ func convert() error {
 		Digest:    digest.FromBytes(cbuf),
 		Size:      (int64)(len(cbuf)),
 	}
-	if err = uploadBytes(ctx, pusher, manifest.Config, cbuf); err != nil {
-		return errors.Wrapf(err, "failed to upload config")
+	// if err = uploadBytes(ctx, pusher, manifest.Config, cbuf); err != nil {
+	// 	return errors.Wrapf(err, "failed to upload config")
+	// }
+	confPath := path.Join(dir, "manifest.config.json")
+	if err := continuity.AtomicWriteFile(confPath, cbuf, 0600); err != nil {
+		return err
 	}
 
 	cbuf, err = json.Marshal(manifest)
 	if err != nil {
 		return err
 	}
-	manifestDesc := specs.Descriptor{
-		MediaType: images.MediaTypeDockerSchema2Manifest,
-		Digest:    digest.FromBytes(cbuf),
-		Size:      (int64)(len(cbuf)),
-	}
+	// manifestDesc := specs.Descriptor{
+	// 	MediaType: images.MediaTypeDockerSchema2Manifest,
+	// 	Digest:    digest.FromBytes(cbuf),
+	// 	Size:      (int64)(len(cbuf)),
+	// }
 
-	if err = uploadBytes(ctx, pusher, manifestDesc, cbuf); err != nil {
-		return errors.Wrapf(err, "failed to upload manifest")
+	// if err = uploadBytes(ctx, pusher, manifestDesc, cbuf); err != nil {
+	// 	return errors.Wrapf(err, "failed to upload manifest")
+	// }
+	descPath := path.Join(dir, "manifest.desc.json")
+	if err := continuity.AtomicWriteFile(descPath, cbuf, 0600); err != nil {
+		return err
 	}
 	logrus.Infof("convert finished")
 
